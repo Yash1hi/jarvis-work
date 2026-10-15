@@ -1,0 +1,571 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jarvis</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --text: rgba(255, 255, 255, 0.93);
+    --dim: rgba(255, 255, 255, 0.58);
+    --faint: rgba(255, 255, 255, 0.34);
+    --line: rgba(255, 255, 255, 0.09);
+    --well: rgba(255, 255, 255, 0.06);
+    --hover: rgba(255, 255, 255, 0.07);
+    --accent: #72d6ff;
+    --amber: #ffc56e;
+    --green: #86e3ad;
+    --red: #ff8080;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+    --plate: 0.5;  /* the tint over the glass; both follow the panel's opacity (see panelState) */
+    --ink: 1;
+  }
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: flex; flex-direction: column; overflow: hidden;
+    font: 13px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    color: var(--text); background: transparent;
+    -webkit-font-smoothing: antialiased; user-select: none; cursor: default;
+  }
+  [hidden] { display: none !important; }
+  /* In the panel, a dark tint over the glass keeps text readable over busy windows. Turning the opacity
+     down (⌃⌥↑/↓) thins the glass and the tint; the text only dims near the bottom, and gets a shadow
+     once there's little behind it. Opened in a normal browser, there's no glass at all. */
+  html.panel body { background: rgba(16, 18, 22, var(--plate)); }
+  html.panel header, html.panel main { opacity: var(--ink); transition: opacity 0.2s; }
+  html.thin body { text-shadow: 0 1px 2px rgba(0, 0, 0, 0.75), 0 0 1px rgba(0, 0, 0, 0.6); }
+  html.thin .card { background: rgba(16, 18, 22, 0.35); }
+  html:not(.panel) body { background: #1c1e22; max-width: 460px; margin: 0 auto; }
+
+  header {
+    display: flex; align-items: center; gap: 8px; flex: none;
+    padding: 14px 16px 10px;
+  }
+  .orb { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); flex: none; position: relative; }
+  .orb::after { content: ""; position: absolute; inset: -4px; border-radius: 50%; opacity: 0; }
+  [data-status="listening"] .orb { background: var(--accent); animation: breathe 2.4s ease-in-out infinite; }
+  [data-status="thinking"] .orb { background: var(--accent); }
+  [data-status="thinking"] .orb::after {
+    opacity: 1; border: 1.5px solid transparent; border-top-color: var(--accent); animation: spin 0.9s linear infinite;
+  }
+  [data-status="speaking"] .orb { background: var(--accent); }
+  [data-status="speaking"] .orb::after { border: 1.5px solid var(--accent); animation: ripple 1.1s ease-out infinite; }
+  [data-status="offline"] .orb { background: transparent; box-shadow: inset 0 0 0 1.5px var(--faint); }
+  .name { font-weight: 600; letter-spacing: 0.01em; }
+  .status { color: var(--dim); }
+  .spacer { flex: 1; }
+  .badge {
+    font-size: 10.5px; color: var(--amber); border: 1px solid color-mix(in srgb, var(--amber) 45%, transparent);
+    border-radius: 99px; padding: 0 7px; line-height: 17px;
+  }
+  .badge.phone { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+  .cost { color: var(--faint); font-variant-numeric: tabular-nums; }
+
+  main { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 0 8px 10px; gap: 6px; }
+  h2 {
+    margin: 0; padding: 6px 8px 4px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--faint); display: flex; gap: 6px;
+  }
+
+  /* What's being said */
+  #talk { flex: none; padding: 0 8px 4px; max-height: 32%; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; }
+  .said-line { display: grid; grid-template-columns: 44px 1fr; gap: 6px; padding: 2px 0; animation: rise 0.25s ease-out; }
+  .said-line .who { font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--faint); padding-top: 1px; }
+  .said-line.you .text { color: var(--dim); }
+  .said-line.pending .text { color: var(--faint); }
+
+  /* What Jarvis put up */
+  #canvas { flex: 1 1 auto; min-height: 120px; display: flex; }
+  .card {
+    flex: 1; min-height: 0; display: flex; flex-direction: column;
+    background: var(--well); border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
+  }
+  .card.fresh { animation: rise 0.3s ease-out; }
+  .card-head { display: flex; align-items: baseline; gap: 8px; padding: 11px 12px 4px 14px; }
+  .card-head h1 { margin: 0; font-size: 14px; font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .card-head .age { color: var(--faint); font-size: 11.5px; white-space: nowrap; }
+  .icon-btn {
+    border: 0; background: none; color: var(--faint); font: inherit; font-size: 15px; line-height: 1;
+    width: 22px; height: 22px; border-radius: 6px; cursor: pointer; align-self: center;
+  }
+  .icon-btn:hover { background: var(--hover); color: var(--text); }
+  .scroll { overflow: auto; padding: 2px 14px 14px; user-select: text; cursor: auto; }
+
+  /* A web page Jarvis opened: this bar, with the panel's browser view filling the space below it */
+  #webbar { flex: none; padding: 0 8px; }
+  .webbar {
+    display: flex; align-items: center; gap: 6px; padding: 6px 6px 6px 12px;
+    background: var(--well); border: 1px solid var(--line); border-radius: 10px;
+  }
+  .web-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  #web-title { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #web-host { color: var(--faint); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  body.web #canvas, body.web #agents, body.web #hint { display: none !important; }
+  a.icon-btn { display: inline-grid; place-items: center; text-decoration: none; }
+
+  /* Agents */
+  #agents { flex: 0 1 auto; min-height: 0; display: flex; flex-direction: column; }
+  #canvas:not([hidden]) ~ #agents { max-height: 42%; }
+  #agents ul { list-style: none; margin: 0; padding: 0; overflow: auto; }
+  .agent {
+    display: grid; grid-template-columns: 14px 1fr auto; gap: 2px 8px; align-items: start;
+    padding: 7px 8px; border-radius: 8px; cursor: pointer; position: relative;
+  }
+  .agent:hover { background: var(--hover); }
+  .agent .dot { width: 7px; height: 7px; border-radius: 50%; margin: 6px 0 0 3px; position: relative; }
+  .agent[data-tone="run"] .dot { background: var(--accent); }
+  .agent[data-tone="run"] .dot::after {
+    content: ""; position: absolute; inset: -3.5px; border-radius: 50%;
+    border: 1.5px solid transparent; border-top-color: var(--accent); animation: spin 1s linear infinite;
+  }
+  .agent[data-tone="ask"] .dot { background: var(--amber); box-shadow: 0 0 0 3px color-mix(in srgb, var(--amber) 22%, transparent); }
+  .agent[data-tone="ok"] .dot { background: color-mix(in srgb, var(--green) 70%, transparent); }
+  .agent[data-tone="bad"] .dot { background: var(--red); }
+  .agent[data-tone="open"] .dot { box-shadow: inset 0 0 0 1.5px var(--faint); }
+  .agent .title { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .agent .side { color: var(--faint); font-size: 11.5px; white-space: nowrap; font-variant-numeric: tabular-nums; padding-top: 1px; }
+  .agent[data-tone="ask"] .side { color: var(--amber); }
+  .agent .sub {
+    grid-column: 2 / 4; color: var(--dim); font-size: 12px;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .agent .where { color: var(--faint); }
+  .actions {
+    position: absolute; top: 4px; right: 6px; display: none; gap: 2px;
+    background: color-mix(in srgb, #2a2c31 92%, transparent); border-radius: 7px; padding: 2px;
+  }
+  .agent:hover .actions { display: flex; }
+  .actions button {
+    border: 0; background: none; color: var(--dim); font: inherit; font-size: 11.5px;
+    padding: 2px 7px; border-radius: 5px; cursor: pointer;
+  }
+  .actions button:hover { background: var(--hover); color: var(--text); }
+  .actions button.confirm { color: var(--red); }
+  .empty { color: var(--faint); padding: 2px 8px 6px; margin: 0; }
+
+  #hint { flex: 1; display: grid; place-items: center; color: var(--faint); text-align: center; padding-bottom: 12%; }
+  #hint b { color: var(--dim); font-weight: 500; }
+
+  .toast {
+    position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.55); color: var(--text); border-radius: 99px; padding: 3px 11px;
+    font-size: 12px; font-variant-numeric: tabular-nums; opacity: 0; transition: opacity 0.25s; pointer-events: none;
+  }
+  .toast.on { opacity: 1; }
+
+  /* Markdown */
+  .md { font-size: 13px; line-height: 1.5; }
+  .md > :first-child { margin-top: 4px; }
+  .md p, .md ul, .md ol, .md pre, .md blockquote, .md .table { margin: 0 0 9px; }
+  .md h2, .md h3, .md h4 { margin: 14px 0 5px; font-size: 13px; font-weight: 600; }
+  .md h2 { font-size: 13.5px; }
+  .md h4 { color: var(--dim); }
+  .md ul, .md ol { padding-left: 18px; }
+  .md li { margin: 2px 0; }
+  .md li > ul, .md li > ol { margin: 2px 0 0; }
+  .md li::marker { color: var(--faint); }
+  .md a { color: var(--accent); text-decoration: none; }
+  .md a:hover { text-decoration: underline; }
+  .md strong { font-weight: 600; }
+  .md code { font: 11.5px var(--mono); background: var(--well); border-radius: 4px; padding: 1px 4px; }
+  .md pre { background: rgba(0, 0, 0, 0.28); border-radius: 8px; padding: 8px 10px; overflow: auto; }
+  .md pre code { background: none; padding: 0; font-size: 11.5px; line-height: 1.5; }
+  .md blockquote { border-left: 2px solid var(--line); padding-left: 10px; color: var(--dim); margin-left: 0; }
+  .md hr { border: 0; border-top: 1px solid var(--line); margin: 12px 0; }
+  .md .table { overflow: auto; }
+  .md table { border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; min-width: 100%; }
+  .md th { text-align: left; font-weight: 500; color: var(--dim); }
+  .md th, .md td { padding: 4px 12px 4px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .md tr:last-child td { border-bottom: 0; }
+  .md .media { display: block; margin: 6px 0 12px; }
+  .md .media img { display: block; max-width: 100%; height: auto; border-radius: 8px; background: var(--well); }
+  .md .media video { display: block; width: 100%; border-radius: 8px; background: #000; }
+  .md .media iframe { display: block; width: 100%; height: 62vh; border: 0; border-radius: 8px; background: #fff; }
+  .md .caption { display: block; margin-top: 5px; color: var(--faint); font-size: 11.5px; }
+
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.14); border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }
+  ::-webkit-scrollbar-track { background: transparent; }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes breathe { 50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 18%, transparent); } }
+  @keyframes ripple { from { opacity: 0.8; transform: scale(0.6); } to { opacity: 0; transform: scale(1.5); } }
+  @keyframes rise { from { opacity: 0; transform: translateY(4px); } }
+  @media (prefers-reduced-motion: reduce) { *, *::after { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body data-status="standby">
+<header>
+  <span class="orb"></span>
+  <span class="name">Jarvis</span>
+  <span class="status" id="status">Standing by</span>
+  <span class="spacer"></span>
+  <span class="badge phone" id="phone" hidden title="Jarvis is using your iPhone's mic and speaker">iPhone</span>
+  <span class="badge" id="through" hidden title="Clicks pass through to the window underneath (⌃⌥K)">Click-through</span>
+  <span class="cost" id="cost"></span>
+</header>
+<main>
+  <section id="talk" hidden aria-live="polite"></section>
+  <section id="webbar" hidden>
+    <div class="webbar">
+      <div class="web-text"><span id="web-title"></span><span id="web-host"></span></div>
+      <a class="icon-btn" id="web-open" title="Open in your browser">↗</a>
+      <button class="icon-btn" id="web-close" title="Close">×</button>
+    </div>
+  </section>
+  <section id="canvas" hidden>
+    <div class="card">
+      <div class="card-head">
+        <h1 id="canvas-title"></h1>
+        <span class="age" id="canvas-age"></span>
+        <button class="icon-btn" id="canvas-clear" title="Clear">×</button>
+      </div>
+      <div class="scroll"><article class="md" id="canvas-body"></article></div>
+    </div>
+  </section>
+  <section id="agents" hidden>
+    <h2>Agents <span id="agent-count"></span></h2>
+    <ul id="agent-list"></ul>
+  </section>
+  <div id="hint">Say <b>“Hey Jarvis”</b></div>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+const params = new URLSearchParams(location.search);
+const TOKEN = params.get("t");
+if (params.has("panel")) document.documentElement.classList.add("panel");
+const $ = (id) => document.getElementById(id);
+const state = { status: "standby", lines: [], agents: [], canvas: null };
+const api = (path) => fetch(`${path}?t=${encodeURIComponent(TOKEN)}`, { method: "POST" }).then((r) => r.json());
+
+// --- markdown: everything is escaped first, so agent output can't inject markup ---------------
+
+const esc = (s) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+
+// Images, video, PDFs and HTML (charts, reports). Addresses are web ones or /f/ (local files jarvisd
+// agreed to serve). HTML runs sandboxed, so it can't reach this page or the API.
+function media(url, alt) {
+  const ext = (url.split("?")[0].match(/\.(\w+)$/) || ["", ""])[1].toLowerCase();
+  const caption = alt ? `<span class="caption">${alt}</span>` : "";
+  if (["mp4", "m4v", "mov", "webm"].includes(ext))
+    return `<span class="media"><video src="${url}" controls playsinline preload="metadata"></video>${caption}</span>`;
+  if (ext === "pdf") return `<span class="media"><iframe src="${url}"></iframe>${caption}</span>`;
+  if (ext === "html" || ext === "htm")
+    return `<span class="media"><iframe src="${url}" sandbox="allow-scripts"></iframe>${caption}</span>`;
+  return `<span class="media"><a href="${url}"><img src="${url}" alt="${alt}" loading="lazy"></a>${caption}</span>`;
+}
+
+function inline(s) {
+  const keep = [];  // finished HTML, swapped out so later rules can't rewrite inside it
+  const hold = (html) => `\u0000${keep.push(html) - 1}\u0000`;
+  const URL_ = "((?:\\/f\\/|https?:\\/\\/)[^\\s)]+)";
+  s = s.replace(/`([^`\n]+)`/g, (_, c) => hold(`<code>${c}</code>`));
+  s = s.replace(new RegExp(`!\\[([^\\]]*)\\]\\(${URL_}\\)`, "g"), (_, alt, url) => hold(media(url, alt)));
+  s = s.replace(new RegExp(`\\[([^\\]]+)\\]\\(${URL_}\\)`, "g"), (_, text, url) => hold(`<a href="${url}">${text}</a>`));
+  s = s.replace(/(^|[\s(])(https?:\/\/[^\s<)]*[^\s<).,;:!?])/g, (_, pre, url) => pre + hold(`<a href="${url}">${url}</a>`));
+  s = s.replace(/\*\*(?=\S)(.+?)\*\*/g, "<strong>$1</strong>");
+  s = s.replace(/(^|[^\w*])\*(?=\S)([^*\n]+?)\*(?!\w)/g, "$1<em>$2</em>");
+  s = s.replace(/~~(?=\S)(.+?)~~/g, "<del>$1</del>");
+  for (let i = 0; i < 4 && s.includes("\u0000"); i++) s = s.replace(/\u0000(\d+)\u0000/g, (_, n) => keep[n]);
+  return s;
+}
+
+const LIST = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
+const RULE = /^\s*([-*_])(\s*\1){2,}\s*$/;
+const TABLE_SEP = /^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/;
+const blank = (l) => !l.trim();
+const startsBlock = (l) => /^```/.test(l) || /^#{1,6}\s/.test(l) || LIST.test(l) || /^&gt;/.test(l) || /^\|/.test(l) || RULE.test(l);
+
+function list(items) {
+  let html = "";
+  const open = [];
+  for (const item of items) {
+    while (open.length && item.indent < open[open.length - 1].indent) html += `</li></${open.pop().tag}>`;
+    const top = open[open.length - 1];
+    if (!top || item.indent > top.indent) {
+      const tag = item.ordered ? "ol" : "ul";
+      open.push({ indent: item.indent, tag });
+      html += `<${tag}><li>`;
+    } else {
+      html += "</li><li>";
+    }
+    html += inline(item.text.replace(/^\[([ xX])\]\s+/, (_, x) => (x === " " ? "☐ " : "☑ ")));
+  }
+  while (open.length) html += `</li></${open.pop().tag}>`;
+  return html;
+}
+
+function blocks(L) {
+  const out = [];
+  let i = 0;
+  while (i < L.length) {
+    const l = L[i];
+    let m;
+    if (blank(l)) { i++; continue; }
+    if (/^```/.test(l)) {
+      const buf = [];
+      for (i++; i < L.length && !/^```/.test(L[i]); i++) buf.push(L[i]);
+      i++;
+      out.push(`<pre><code>${buf.join("\n")}</code></pre>`);
+    } else if ((m = l.match(/^(#{1,6})\s+(.*?)\s*#*\s*$/))) {
+      const n = Math.min(m[1].length + 1, 4);  // the card title is the h1
+      out.push(`<h${n}>${inline(m[2])}</h${n}>`);
+      i++;
+    } else if (RULE.test(l)) {
+      out.push("<hr>");
+      i++;
+    } else if (/^\|/.test(l) && TABLE_SEP.test(L[i + 1] || "")) {
+      const cells = (row) => row.trim().replace(/^\||\|$/g, "").split("|").map((c) => inline(c.trim()));
+      const head = cells(l);
+      const rows = [];
+      for (i += 2; i < L.length && /^\|/.test(L[i]); i++) rows.push(cells(L[i]));
+      out.push(`<div class="table"><table><thead><tr>${head.map((c) => `<th>${c}</th>`).join("")}</tr></thead><tbody>` +
+        rows.map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join("")}</tr>`).join("") + "</tbody></table></div>");
+    } else if (/^&gt;/.test(l)) {
+      const buf = [];
+      for (; i < L.length && /^&gt;/.test(L[i]); i++) buf.push(L[i].replace(/^&gt;\s?/, ""));
+      out.push(`<blockquote>${blocks(buf)}</blockquote>`);
+    } else if (LIST.test(l)) {
+      const items = [];
+      while (i < L.length) {
+        const mm = L[i].match(LIST);
+        if (mm) {
+          items.push({ indent: mm[1].replace(/\t/g, "    ").length, ordered: /\d/.test(mm[2]), text: mm[3] });
+          i++;
+        } else if (!blank(L[i]) && /^\s+\S/.test(L[i]) && !startsBlock(L[i].trim())) {
+          items[items.length - 1].text += " " + L[i].trim();  // a wrapped item
+          i++;
+        } else if (blank(L[i]) && LIST.test(L[i + 1] || "")) {
+          i++;  // a loose list
+        } else break;
+      }
+      out.push(list(items));
+    } else {
+      const buf = [l];
+      for (i++; i < L.length && !blank(L[i]) && !startsBlock(L[i]); i++) buf.push(L[i]);
+      out.push(`<p>${inline(buf.join(" "))}</p>`);
+    }
+  }
+  return out.join("");
+}
+
+const markdown = (src) => blocks(esc(String(src || "").replace(/\r\n?/g, "\n")).split("\n"));
+
+// --- rendering --------------------------------------------------------------------------------
+
+const STATUS = { standby: "Standing by", listening: "Listening", thinking: "Thinking", speaking: "Speaking", offline: "Offline" };
+const TONE = {
+  working: ["run", ""], busy: ["run", ""], blocked: ["ask", "Needs you"],
+  done: ["ok", ""], idle: ["ok", ""], failed: ["bad", "Failed"], open: ["open", ""],
+};
+
+function ago(seconds) {
+  if (!seconds) return "";
+  const s = Math.max(0, Date.now() / 1000 - seconds);
+  if (s < 45) return "now";
+  if (s < 3600) return `${Math.round(s / 60)}m`;
+  if (s < 86400) return `${Math.round(s / 3600)}h`;
+  return `${Math.round(s / 86400)}d`;
+}
+
+function el(tag, cls, text) {
+  const node = document.createElement(tag);
+  if (cls) node.className = cls;
+  if (text != null) node.textContent = text;
+  return node;
+}
+
+function renderStatus() {
+  document.body.dataset.status = state.status;
+  $("status").textContent = STATUS[state.status] || state.status;
+  renderTalk();
+}
+
+const lineRows = new Map();  // line id -> row, updated in place: rebuilding replays every fade-in (flicker)
+function renderTalk() {
+  const talk = $("talk");
+  const last = state.lines[state.lines.length - 1];
+  const live = ["listening", "thinking", "speaking"].includes(state.status);
+  talk.hidden = !state.lines.length || (!live && Date.now() / 1000 - last.at > 30);
+  const shown = state.lines.slice(-5);
+  const keep = new Set(shown.map((line) => line.id));
+  for (const [id, row] of lineRows) if (!keep.has(id)) { row.remove(); lineRows.delete(id); }
+  for (const line of shown) {
+    let row = lineRows.get(line.id);
+    if (!row) {  // new lines only ever arrive at the end, so existing rows never move
+      row = el("div", "said-line");
+      row.append(el("span", "who", line.who === "you" ? "You" : "Jarvis"), el("span", "text"));
+      lineRows.set(line.id, row);
+      talk.appendChild(row);
+    }
+    row.className = `said-line ${line.who}${line.text ? "" : " pending"}`;
+    const text = row.lastChild, value = line.text || "…";
+    if (text.textContent !== value) text.textContent = value;
+  }
+  renderHint();
+}
+
+let shownAt = 0;
+function renderCanvas() {
+  const c = state.canvas;
+  $("canvas").hidden = !c;
+  if (c && c.at !== shownAt) {
+    shownAt = c.at;
+    $("canvas-title").textContent = c.title || "From Jarvis";
+    $("canvas-body").innerHTML = markdown(c.markdown);
+    const card = document.querySelector(".card");
+    card.classList.remove("fresh");
+    void card.offsetWidth;  // restart the entrance animation
+    card.classList.add("fresh");
+    const scroller = document.querySelector(".scroll");
+    scroller.scrollTop = 0;
+    requestAnimationFrame(() => { scroller.scrollTop = 0; });  // again once laid out: it can open mid-way
+  }
+  renderAges();
+  renderHint();
+}
+
+const rows = new Map();  // handle -> <li>, kept across updates so hovering isn't lost
+function agentRow(agent) {
+  let li = rows.get(agent.handle);
+  if (!li) {
+    li = el("li", "agent");
+    li.dataset.handle = agent.handle;
+    li.append(el("span", "dot"), el("span", "title"), el("span", "side"), el("span", "sub"), el("div", "actions"));
+    li.addEventListener("click", (e) => {
+      const act = e.target.closest("button")?.dataset.act;
+      if (act === "stop" && !e.target.classList.contains("confirm")) {
+        e.target.classList.add("confirm");
+        e.target.textContent = "Stop?";
+        setTimeout(() => { e.target.classList.remove("confirm"); e.target.textContent = "Stop"; }, 2500);
+        return;
+      }
+      api(`/api/agent/${encodeURIComponent(li.dataset.handle)}/${act || "show"}`);
+    });
+    rows.set(agent.handle, li);
+  }
+  const [tone, label] = TONE[agent.state] || ["ok", ""];
+  li.dataset.tone = tone;
+  li.querySelector(".title").textContent = agent.name || agent.project;
+  li.querySelector(".title").title = agent.name || "";
+  li.querySelector(".side").textContent = label || ago(agent.started);
+  const sub = li.querySelector(".sub");
+  const where = [agent.project !== "errands" ? agent.project : "", agent.where === "Terminal tab" ? "Terminal" : "",
+                 agent.agent === "codex" ? "Codex" : ""].filter(Boolean).join(" · ");
+  const said = agent.said || (tone === "run" ? (agent.tool ? `Using ${agent.tool}…` : "Starting…") : "");
+  sub.replaceChildren(...(where ? [el("span", "where", said ? `${where} — ` : where)] : []), said);
+  sub.hidden = !where && !said;
+  const actions = li.querySelector(".actions");
+  const buttons = [];
+  if (agent.said) buttons.push(["show", "Show"]);
+  buttons.push(["open", "Open"]);
+  if (agent.where === "background" && (tone === "run" || tone === "ask")) buttons.push(["stop", "Stop"]);
+  if (actions.dataset.set !== buttons.join()) {
+    actions.dataset.set = buttons.join();
+    actions.replaceChildren(...buttons.map(([act, text]) => {
+      const button = el("button", "", text);
+      button.dataset.act = act;
+      return button;
+    }));
+  }
+  return li;
+}
+
+function renderAgents() {
+  const rank = (a) => ({ blocked: 0, working: 1, busy: 1 })[a.state] ?? (a.where === "Terminal tab" ? 3 : 2);
+  const list = [...state.agents].sort((a, b) => rank(a) - rank(b) || (b.started || 0) - (a.started || 0)).slice(0, 14);
+  const keep = new Set(list.map((a) => a.handle));
+  for (const [handle, li] of rows) if (!keep.has(handle)) { li.remove(); rows.delete(handle); }
+  const ul = $("agent-list");
+  const ordered = list.map(agentRow);
+  // Re-append only when the order changed: moving a row restarts its spinner.
+  if (ordered.some((li, i) => ul.children[i] !== li)) ordered.forEach((li) => ul.appendChild(li));
+  const active = state.agents.filter((a) => rank(a) < 2).length;
+  $("agent-count").textContent = active ? `· ${active} active` : "";
+  $("agents").hidden = !list.length;
+  renderHint();
+}
+
+function renderAges() {
+  if (state.canvas) $("canvas-age").textContent = ago(state.canvas.at);
+  for (const agent of state.agents) {
+    const li = rows.get(agent.handle);
+    if (li && !(TONE[agent.state] || [])[1]) li.querySelector(".side").textContent = ago(agent.started);
+  }
+}
+
+function renderHint() {
+  $("hint").hidden = !!state.web || !$("talk").hidden || !$("canvas").hidden || !$("agents").hidden;
+  postBrowserTop();
+}
+
+const host = (url) => (url.startsWith("http://127.0.0.1") ? "File on this Mac" : (() => {
+  try { return new URL(url).host; } catch { return url; }
+})());
+
+function renderWeb() {
+  const web = state.web;
+  document.body.classList.toggle("web", !!web);
+  $("webbar").hidden = !web;
+  if (web) {
+    $("web-title").textContent = web.title;
+    $("web-host").textContent = host(web.url);
+    $("web-open").href = web.url;
+  }
+  renderHint();
+}
+
+// The panel lays its browser view over everything below the web bar, so tell it where that is.
+let lastTop = 0;
+function postBrowserTop() {
+  if (!state.web) return;
+  const top = Math.ceil($("webbar").getBoundingClientRect().bottom + 8);
+  if (top !== lastTop) window.webkit?.messageHandlers?.panel?.postMessage({ browserTop: (lastTop = top) });
+}
+new ResizeObserver(postBrowserTop).observe(document.body);
+
+// The panel reports the page's real title and address as it loads and as links are followed.
+window.browserPage = (title, url) => {
+  if (!state.web) return;
+  if (title) $("web-title").textContent = title;
+  if (url) { $("web-host").textContent = host(url); $("web-open").href = url; }
+};
+
+let toastTimer;
+window.panelState = ({ opacity, clickThrough }) => {
+  $("through").hidden = !clickThrough;
+  const root = document.documentElement;
+  root.style.setProperty("--plate", (0.5 * opacity).toFixed(3));
+  root.style.setProperty("--ink", Math.min(1, 0.45 + opacity).toFixed(3));
+  root.classList.toggle("thin", opacity < 0.6);
+  const pct = `Opacity ${Math.round(opacity * 100)}%`;
+  if (window.lastPct && window.lastPct !== pct) {
+    $("toast").textContent = pct;
+    $("toast").classList.add("on");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => $("toast").classList.remove("on"), 1100);
+  }
+  window.lastPct = pct;
+};
+
+$("canvas-clear").addEventListener("click", () => api("/api/canvas/clear"));
+$("web-close").addEventListener("click", () => api("/api/web/close"));
+
+// --- live updates -----------------------------------------------------------------------------
+
+const events = new EventSource(`/events?t=${encodeURIComponent(TOKEN)}`);
+const on = (name, fn) => events.addEventListener(name, (e) => { state[name] = JSON.parse(e.data); fn(); });
+on("status", renderStatus);
+on("lines", renderTalk);
+on("canvas", renderCanvas);
+on("agents", renderAgents);
+on("web", renderWeb);
+on("phone", () => { $("phone").hidden = !state.phone; });
+on("cost", () => { $("cost").textContent = state.cost ? `$${state.cost.toFixed(2)} today` : ""; });
+events.onerror = () => { state.status = "offline"; renderStatus(); };  // EventSource reconnects by itself
+setInterval(() => { renderAges(); renderTalk(); }, 5000);
+</script>
+</body>
+</html>

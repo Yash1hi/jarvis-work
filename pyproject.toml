@@ -1,0 +1,17 @@
+[project]
+name = "jarvis"
+version = "0.1.0"
+description = "Voice front end for work: talk to Jarvis, background agents do the work"
+requires-python = ">=3.13"
+dependencies = [
+    "certifi>=2024.8",
+    "numpy>=2.1",
+    "openwakeword>=0.6",
+    "qrcode>=7.4",
+    "scipy>=1.14",
+    "websockets>=13",
+]
+
+[tool.uv]
+package = false
+environments = ["sys_platform == 'darwin'"]  # Mac-only; skips openwakeword's Linux-only tflite dependency

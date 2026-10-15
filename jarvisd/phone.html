@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Jarvis">
+<meta name="theme-color" content="#0e1013">
+<link rel="manifest" id="manifest">
+<title>Jarvis</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0e1013;
+    --text: rgba(255, 255, 255, 0.93);
+    --dim: rgba(255, 255, 255, 0.58);
+    --faint: rgba(255, 255, 255, 0.34);
+    --line: rgba(255, 255, 255, 0.1);
+    --well: rgba(255, 255, 255, 0.06);
+    --accent: #72d6ff;
+    --amber: #ffc56e;
+    --red: #ff8080;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 16px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased; user-select: none; -webkit-user-select: none;
+    display: flex; flex-direction: column; overflow: hidden;
+    padding: max(16px, env(safe-area-inset-top)) 20px max(20px, env(safe-area-inset-bottom));
+  }
+  [hidden] { display: none !important; }
+
+  header { display: flex; align-items: center; gap: 8px; height: 32px; }
+  .name { font-weight: 600; font-size: 17px; }
+  .link { margin-left: auto; font-size: 13px; color: var(--faint); display: flex; align-items: center; gap: 6px; }
+  .link::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
+  body[data-link="on"] .link::before { background: #86e3ad; }
+  body[data-link="off"] .link::before { background: var(--red); }
+
+  .stage { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px; min-height: 0; }
+  .orb { width: 132px; height: 132px; border-radius: 50%; position: relative; display: grid; place-items: center; }
+  .orb .core {
+    width: 64px; height: 64px; border-radius: 50%; background: var(--faint);
+    transition: background 0.3s, transform 0.08s linear;
+  }
+  .orb .ring { position: absolute; inset: 0; border-radius: 50%; border: 2px solid var(--line); }
+  [data-status="listening"] .orb .core, [data-status="thinking"] .orb .core, [data-status="speaking"] .orb .core { background: var(--accent); }
+  [data-status="thinking"] .orb .ring { border-color: transparent; border-top-color: var(--accent); animation: spin 0.9s linear infinite; }
+  [data-status="speaking"] .orb .ring { border-color: var(--accent); animation: ripple 1.2s ease-out infinite; }
+  [data-status="listening"] .orb .ring { border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
+  .status { font-size: 20px; font-weight: 500; text-align: center; }
+  .hint { color: var(--dim); font-size: 14px; text-align: center; max-width: 280px; margin-top: -12px; }
+
+  .talk {
+    margin-top: 6px; border: 0; border-radius: 99px; padding: 14px 34px; font: inherit; font-weight: 600;
+    background: var(--well); color: var(--text); box-shadow: inset 0 0 0 1px var(--line);
+  }
+  .talk:active { background: rgba(114, 214, 255, 0.18); }
+  body[data-status="listening"] .talk, body[data-status="thinking"] .talk, body[data-status="speaking"] .talk { visibility: hidden; }
+
+  .captions { min-height: 96px; max-height: 30vh; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; gap: 4px; }
+  .said { display: grid; grid-template-columns: 54px 1fr; gap: 6px; font-size: 15px; }
+  .said .who { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--faint); padding-top: 3px; }
+  .said.you .text { color: var(--dim); }
+
+  .start-screen { position: fixed; inset: 0; background: var(--bg); display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 18px; padding: 32px; text-align: center; }
+  .start-screen h1 { font-size: 26px; margin: 0; font-weight: 600; }
+  .start-screen p { color: var(--dim); margin: 0; max-width: 300px; font-size: 15px; }
+  .start { border: 0; border-radius: 99px; padding: 15px 40px; font: inherit; font-weight: 600; font-size: 17px;
+    background: var(--accent); color: #062433; margin-top: 8px; }
+  .error { color: var(--red); font-size: 14px; }
+  footer { display: flex; justify-content: center; padding-top: 14px; }
+  .stop { border: 0; background: none; color: var(--faint); font: inherit; font-size: 14px; padding: 8px 14px; }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes ripple { from { opacity: 0.9; transform: scale(0.75); } to { opacity: 0; transform: scale(1.25); } }
+</style>
+</head>
+<body data-status="standby" data-link="idle">
+<header><span class="name">Jarvis</span><span class="link" id="link">Not connected</span></header>
+<div class="stage">
+  <div class="orb"><div class="ring"></div><div class="core" id="core"></div></div>
+  <div class="status" id="status">Standing by</div>
+  <div class="hint" id="hint">Say “Hey Jarvis”, or tap Talk.</div>
+  <button class="talk" id="talk">Talk</button>
+</div>
+<div class="captions" id="captions"></div>
+<footer><button class="stop" id="stop">Hand back to the Mac</button></footer>
+
+<div class="start-screen" id="start-screen">
+  <h1>Jarvis</h1>
+  <p>Use this phone’s mic and your headphones for Jarvis. Keep this page open while you talk: iOS turns the mic off when Safari is in the background.</p>
+  <button class="start" id="start">Start</button>
+  <div class="error" id="error" hidden></div>
+</div>
+
+<script>
+const KEY = new URLSearchParams(location.search).get("k") || "";
+document.getElementById("manifest").href = `/manifest.json?k=${encodeURIComponent(KEY)}`;
+const $ = (id) => document.getElementById(id);
+const RATE = 24000;
+const STATUS = { standby: "Standing by", listening: "Listening", thinking: "Thinking", speaking: "Speaking" };
+
+let ctx, stream, ws, wakeLock, stopped = false;
+let chunks = [];  // what's scheduled since the last cut: {source, start, samples}
+
+// The mic, resampled to 24 kHz pcm16 in 40 ms chunks, plus a level for the orb.
+const WORKLET = `
+class Mic extends AudioWorkletProcessor {
+  constructor() { super(); this.step = sampleRate / ${RATE}; this.pos = 0; this.prev = 0; this.fresh(); this.peak = 0; }
+  fresh() { this.out = new Int16Array(${RATE / 25}); this.n = 0; }
+  process(inputs) {
+    const x = inputs[0] && inputs[0][0];
+    if (!x) return true;
+    const at = (k) => (k === 0 ? this.prev : x[k - 1]);  // index 0 is the last sample of the previous block
+    while (this.pos < x.length) {
+      const i = Math.floor(this.pos), f = this.pos - i;
+      const v = at(i) * (1 - f) + at(i + 1) * f;
+      this.peak = Math.max(this.peak, Math.abs(v));
+      this.out[this.n++] = Math.max(-1, Math.min(1, v)) * 32767;
+      if (this.n === this.out.length) {
+        this.port.postMessage({ pcm: this.out.buffer, level: this.peak }, [this.out.buffer]);
+        this.fresh(); this.peak = 0;
+      }
+      this.pos += this.step;
+    }
+    this.pos -= x.length;
+    this.prev = x[x.length - 1];
+    return true;
+  }
+}
+registerProcessor("mic", Mic);`;
+
+async function start() {
+  $("error").hidden = true;
+  try {
+    ctx = new AudioContext();
+    await ctx.resume();
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
+    });
+    await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET], { type: "application/javascript" })));
+    const mic = new AudioWorkletNode(ctx, "mic");
+    ctx.createMediaStreamSource(stream).connect(mic);
+    mic.port.onmessage = ({ data }) => {
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send(data.pcm);
+      $("core").style.transform = `scale(${1 + Math.min(0.45, data.level * 1.6)})`;
+    };
+    $("start-screen").hidden = true;
+    stopped = false;
+    connect();
+    keepAwake();
+  } catch (e) {
+    $("error").textContent = e.name === "NotAllowedError"
+      ? "Microphone access was refused. Allow it for this site in Settings › Safari, then try again."
+      : `Couldn't start: ${e.message}`;
+    $("error").hidden = false;
+  }
+}
+
+let retry;
+function connect() {
+  if (stopped) return;
+  clearTimeout(retry);
+  if (ws && ws.readyState <= WebSocket.OPEN) return;  // one connection at a time: two would keep replacing each other
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  const sock = new WebSocket(`${proto}://${location.host}/ws?k=${encodeURIComponent(KEY)}`);
+  ws = sock;
+  sock.binaryType = "arraybuffer";
+  sock.onopen = () => { document.body.dataset.link = "on"; $("link").textContent = "Connected"; };
+  sock.onclose = (e) => {
+    if (ws !== sock) return;  // an older connection finishing up
+    document.body.dataset.link = "off";
+    cut();
+    if (e.code === 4001) {  // another tab or device took over: don't fight it for the mic
+      $("link").textContent = "In use elsewhere";
+      $("start-screen").hidden = false;
+      $("start").textContent = "Use this phone";
+      stopped = true;
+      return;
+    }
+    $("link").textContent = stopped ? "Handed back to the Mac" : "Reconnecting…";
+    if (!stopped) retry = setTimeout(connect, 2000);
+  };
+  sock.onmessage = ({ data }) => {
+    if (ws !== sock) return;
+    if (data instanceof ArrayBuffer) return play(new Int16Array(data));
+    const m = JSON.parse(data);
+    if (m.type === "cut") sock.send(JSON.stringify({ type: "played", samples: cut() }));
+    if (m.type === "status") setStatus(m.value);
+    if (m.type === "lines") setLines(m.value);
+  };
+}
+
+// Jarvis's voice: each chunk is scheduled right after the last, so playback is seamless.
+function play(pcm) {
+  const f32 = new Float32Array(pcm.length);
+  for (let i = 0; i < pcm.length; i++) f32[i] = pcm[i] / 32768;
+  const buffer = ctx.createBuffer(1, f32.length, RATE);
+  buffer.copyToChannel(f32, 0);
+  const source = ctx.createBufferSource();
+  source.buffer = buffer;
+  source.connect(ctx.destination);
+  const last = chunks[chunks.length - 1];
+  const at = Math.max(ctx.currentTime + 0.04, last ? last.start + last.samples / RATE : 0);
+  source.start(at);
+  chunks.push({ source, start: at, samples: pcm.length });
+}
+
+// Stop at once; returns how many samples were actually heard (Jarvis trims its memory to that).
+function cut() {
+  const now = ctx ? ctx.currentTime : 0;
+  let heard = 0;
+  for (const c of chunks) {
+    heard += Math.max(0, Math.min(c.samples, Math.floor((now - c.start) * RATE)));
+    try { c.source.stop(); } catch {}
+  }
+  chunks = [];
+  return heard;
+}
+
+function setStatus(status) {
+  document.body.dataset.status = status;
+  $("status").textContent = STATUS[status] || status;
+  $("hint").textContent = status === "standby" ? "Say “Hey Jarvis”, or tap Talk." : "";
+}
+
+function setLines(lines) {
+  $("captions").replaceChildren(...lines.slice(-3).map((line) => {
+    const row = document.createElement("div");
+    row.className = `said ${line.who}`;
+    const who = document.createElement("span"); who.className = "who"; who.textContent = line.who === "you" ? "You" : "Jarvis";
+    const text = document.createElement("span"); text.className = "text"; text.textContent = line.text || "…";
+    row.append(who, text);
+    return row;
+  }));
+}
+
+async function keepAwake() {
+  try { wakeLock = await navigator.wakeLock?.request("screen"); } catch {}
+}
+
+// Back from the background: iOS suspended the audio and may have dropped the connection.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible" || stopped || !ctx) return;
+  ctx.resume();
+  keepAwake();
+  if (!ws || ws.readyState > WebSocket.OPEN) connect();
+});
+
+$("start").addEventListener("click", () => {
+  if (ctx && stream) {  // still set up (taken over by another tab): just take the mic back
+    stopped = false;
+    $("start-screen").hidden = true;
+    connect();
+  } else start();
+});
+$("talk").addEventListener("click", () => ws?.readyState === WebSocket.OPEN && ws.send(JSON.stringify({ type: "talk" })));
+$("stop").addEventListener("click", () => {
+  stopped = true;
+  ws?.close();
+  wakeLock?.release?.();
+  stream?.getTracks().forEach((track) => track.stop());  // the mic really goes off (and iOS's mic dot)
+  ctx?.close();
+  ctx = stream = null;
+  $("start-screen").hidden = false;
+  $("start").textContent = "Use this phone again";
+});
+</script>
+</body>
+</html>
